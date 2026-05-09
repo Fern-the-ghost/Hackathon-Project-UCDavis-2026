@@ -81,28 +81,16 @@ class NoiseSourceInput(NamedTuple):
     reference_level_db: float
 
 
-def compute_grid_levels_db(
+def compute_metric_layout(
     min_lon: float,
     min_lat: float,
     max_lon: float,
     max_lat: float,
     cell_size_m: float,
-    sources: list[NoiseSourceInput],
-    weighting: AcousticWeighting,
-    A_abs: float = 0.0,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Build a metric-aligned grid over the bbox and return L_total [dB] per cell.
-
-    Returns:
-        L_grid: shape (n_rows, n_cols)
-        xs_center_m: 1d cell-center x (m east from origin at min_lon, min_lat)
-        ys_center_m: 1d cell-center y (m north)
-    """
+) -> tuple[float, float, int, int, np.ndarray, np.ndarray]:
+    """Metric bbox extent (m), grid counts, and 1D cell-center axes from SW corner."""
     if cell_size_m <= 0:
         raise ValueError("cell_size_m must be positive")
-    if not sources:
-        raise ValueError("at least one source is required")
 
     lon0, lat0 = min_lon, min_lat
 
@@ -127,9 +115,101 @@ def compute_grid_levels_db(
     n_cols = max(1, int(math.ceil(width_m / cell_size_m)))
     n_rows = max(1, int(math.ceil(height_m / cell_size_m)))
 
-    # Cell centers in meters (south-west origin)
     xs_half = (np.arange(n_cols) + 0.5) * (width_m / n_cols)
     ys_half = (np.arange(n_rows) + 0.5) * (height_m / n_rows)
+    return width_m, height_m, n_rows, n_cols, xs_half, ys_half
+
+
+def local_meters_to_lonlat(
+    x_m: np.ndarray | float,
+    y_m: np.ndarray | float,
+    lon0: float,
+    lat0: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Inverse of ``lonlat_to_local_meters`` for tangent-plane offsets (meters east/north)."""
+    R = 6371000.0
+    phi0 = math.radians(lat0)
+    xm = np.asarray(x_m, dtype=np.float64)
+    ym = np.asarray(y_m, dtype=np.float64)
+    lon = lon0 + np.degrees(xm / (R * math.cos(phi0)))
+    lat = lat0 + np.degrees(ym / R)
+    return lon, lat
+
+
+def bilinear_sample_db(
+    grid_db: np.ndarray,
+    x_m: float,
+    y_m: float,
+    width_m: float,
+    height_m: float,
+) -> float:
+    """Sample ``grid_db`` (shape rows×cols) at metric offset (x_m, y_m) from SW corner."""
+    n_rows, n_cols = grid_db.shape
+    if n_rows < 1 or n_cols < 1:
+        raise ValueError("grid_db must be non-empty")
+
+    dx = width_m / n_cols
+    dy = height_m / n_rows
+    x_clamped = min(max(x_m, 0.0), width_m)
+    y_clamped = min(max(y_m, 0.0), height_m)
+
+    col_c = x_clamped / dx - 0.5
+    row_c = y_clamped / dy - 0.5
+
+    c0 = int(math.floor(col_c))
+    r0 = int(math.floor(row_c))
+    c1 = min(c0 + 1, n_cols - 1)
+    r1 = min(r0 + 1, n_rows - 1)
+    c0 = max(c0, 0)
+    r0 = max(r0, 0)
+
+    tc = col_c - c0 if n_cols > 1 else 0.0
+    tr = row_c - r0 if n_rows > 1 else 0.0
+    tc = min(max(tc, 0.0), 1.0)
+    tr = min(max(tr, 0.0), 1.0)
+
+    q00 = float(grid_db[r0, c0])
+    q01 = float(grid_db[r0, c1])
+    q10 = float(grid_db[r1, c0])
+    q11 = float(grid_db[r1, c1])
+    q0 = q00 * (1 - tc) + q01 * tc
+    q1 = q10 * (1 - tc) + q11 * tc
+    return float(q0 * (1 - tr) + q1 * tr)
+
+
+def lonlat_to_metric_offset(lon: float, lat: float, lon0: float, lat0: float) -> tuple[float, float]:
+    """Single-point metric offset (east_m, north_m) from ``(lon0, lat0)``."""
+    xe, yn = lonlat_to_local_meters(np.array([lon]), np.array([lat]), lon0, lat0)
+    return float(xe[0]), float(yn[0])
+
+
+def compute_grid_levels_db(
+    min_lon: float,
+    min_lat: float,
+    max_lon: float,
+    max_lat: float,
+    cell_size_m: float,
+    sources: list[NoiseSourceInput],
+    weighting: AcousticWeighting,
+    A_abs: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Build a metric-aligned grid over the bbox and return L_total [dB] per cell.
+
+    Returns:
+        L_grid: shape (n_rows, n_cols)
+        xs_center_m: 1d cell-center x (m east from origin at min_lon, min_lat)
+        ys_center_m: 1d cell-center y (m north)
+    """
+    if not sources:
+        raise ValueError("at least one source is required")
+
+    lon0, lat0 = min_lon, min_lat
+    width_m, height_m, n_rows, n_cols, xs_half, ys_half = compute_metric_layout(
+        min_lon, min_lat, max_lon, max_lat, cell_size_m
+    )
+
+    # Cell centers in meters (south-west origin)
     CX, CY = np.meshgrid(xs_half, ys_half)
 
     sx_m = []

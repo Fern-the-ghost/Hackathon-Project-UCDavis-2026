@@ -1,0 +1,156 @@
+.app-shell {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.planning-map-root {
+  position: absolute;
+  inset: 0;
+}
+
+.map-overlay-top {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.title-chip,
+.status-chip,
+.error-chip {
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.12);
+  max-width: min(420px, calc(100vw - 220px));
+}
+
+.title-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.error-chip {
+  background: rgba(254, 226, 226, 0.92);
+  color: #7f1d1d;
+  font-size: 13px;
+}
+
+.status-chip {
+  font-size: 13px;
+}
+
+.legend {
+  position: absolute;
+  bottom: 22px;
+  left: 16px;
+  z-index: 2;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 34px rgba(15, 23, 42, 0.14);
+  width: min(320px, calc(100vw - 220px));
+}
+
+.legend-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.legend-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2ecc71, #f1c40f, #e67e22, #e74c3c);
+}
+
+.legend-ticks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.controls-rail {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 220px;
+  z-index: 3;
+  padding: 16px 14px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.controls-rail .panel {
+  pointer-events: auto;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: 0 12px 38px rgba(15, 23, 42, 0.14);
+}
+
+.panel-title {
+  font-size: 13px;
+  font-weight: 650;
+  margin-bottom: 10px;
+}
+
+.toggle-row {
+  display: flex;
+  gap: 8px;
+}
+
+.toggle-row button {
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.toggle-row button.active {
+  border-color: #0f172a;
+  background: #0f172a;
+  color: #f8fafc;
+}
+
+.muted {
+  color: #64748b;
+}
+
+.small {
+  font-size: 12px;
+  line-height: 1.45;
+  margin-top: 10px;
+}
+
+.startup-error {
+  padding: 48px 24px;
+  max-width: 640px;
+  margin: 0 auto;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+}
+
+.startup-error code {
+  font-size: 0.95em;
+}
