@@ -117,6 +117,16 @@ function riskDescriptor(db: number): string {
   return 'Violation'
 }
 
+/** Friendly zoning label. */
+function zoneLabel(zone: string): string {
+  switch (zone) {
+    case 'RESIDENTIAL': return 'Residential'
+    case 'COMMERCIAL': return 'Commercial'
+    case 'INDUSTRIAL': return 'Industrial'
+    default: return 'Other'
+  }
+}
+
 export function PlanningMap({
   mapboxToken,
   noisePolygons,
@@ -157,12 +167,14 @@ export function PlanningMap({
     if (info.picked && info.object) {
       const props = (info.object as GeoJSON.Feature).properties as Record<string, unknown> | null
       const db = props?.db as number | undefined
+      const zone = props?.zone as string | undefined
       if (db !== undefined && info.x !== undefined && info.y !== undefined) {
         const desc = riskDescriptor(db)
+        const zl = zone ? zoneLabel(zone) : ''
         setTooltip({
           x: info.x,
           y: info.y,
-          text: `Noise Level: ${db.toFixed(1)} dB · ${desc}`,
+          text: `Noise Level: ${db.toFixed(1)} dB · ${desc}${zl ? ` · Zone: ${zl}` : ''}`,
         })
         return
       }
@@ -185,7 +197,7 @@ export function PlanningMap({
         onHover: handleHover,
       }),
 
-      // §5.2 Conflict mask
+      // §5.2 Conflict mask — pulsing red squares
       new GeoJsonLayer({
         id: 'urbanacoustic-conflict-mask',
         data: conflictMask ?? { type: 'FeatureCollection', features: [] },
@@ -297,7 +309,7 @@ export function PlanningMap({
           <>
             <hr className="legend-divider" />
             <div className="legend-conflict">
-              <span className="conflict-swatch" />
+              <span className="conflict-swatch pulse-swatch" />
               <span className="muted small">Residential {'>'} 45 dB (Violation Area)</span>
             </div>
           </>

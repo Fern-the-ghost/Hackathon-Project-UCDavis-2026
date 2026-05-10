@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 
 import httpx
 import numpy as np
@@ -73,15 +74,34 @@ class NoiseSourcePayload(BaseModel):
     )
 
 
+class BarrierType(str, Enum):
+    CONCRETE = "concrete"
+    GREEN = "green"
+
+
+class BarrierPolygon(BaseModel):
+    """A barrier footprint: outer ring as list of [lon, lat] pairs (§3.5)."""
+    ring: list[list[float]] = Field(..., min_length=3)
+    type: BarrierType = BarrierType.CONCRETE
+
+
 class CalculateRequest(BaseModel):
     bbox: BoundingBox
     sources: list[NoiseSourcePayload] = Field(..., min_length=1)
     weighting: AcousticWeighting = AcousticWeighting.DBA
-    cell_size_m: float = Field(50.0, gt=0, description="Approximate cell edge (meters)")
+    cell_size_m: float = Field(
+        85.0,
+        gt=0,
+        description="Approximate cell edge (meters). Capped so grid ≤ 60×60 for demo performance.",
+    )
     A_abs: float = Field(
         0.0,
         ge=0.0,
         description="Nominal urban absorption term §3.2 (dB); dBC uses half.",
+    )
+    barriers: list[BarrierPolygon] = Field(
+        default_factory=list,
+        description="§3.5 barrier footprints (WGS84 rings) for ray-intersection shadow.",
     )
 
 
@@ -93,6 +113,7 @@ class CalculateResponse(BaseModel):
     A_abs: float
     grid_db: list[list[float]]
     zoning_mask: list[list[str]]
+    barriers_applied: int
 
 
 class ViabilityRequest(BaseModel):
@@ -176,54 +197,90 @@ def calculate(body: CalculateRequest) -> CalculateResponse:
     """Return cumulative SPL grid (§3.4) plus §6 zoning mask."""
     try:
         sources = _noise_sources(body.sources)
-        L_grid, xs_half, ys_half = compute_grid_levels_db(
-            body.bbox.min_lon,
-            body.bbox.min_lat,
-            body.bbox.max_lon,
-            body.bbox.max_lat,
-            body.cell_size_m,
-            sources,
-            body.weighting,
-            A_abs=body.A_abs,
-        )
-        n_rows, n_cols = L_grid.shape
-        width_m, height_m, _, _, _, _ = compute_metric_layout(
-            body.bbox.min_lon,
-            body.bbox.min_lat,
-            body.bbox.max_lon,
-            body.bbox.max_lat,
-            body.cell_size_m,
-        )
 
+        # Step 1: Build metric layout axes (needed before both zoning and grid)
+        # Cap resolution at 60×60 for snappy demo performance
+        effective_cell_size = body.cell_size_m
+        width_m, height_m, grid_rows, grid_cols, xs_half, ys_half = compute_metric_layout(
+            body.bbox.min_lon,
+            body.bbox.min_lat,
+            body.bbox.max_lon,
+            body.bbox.max_lat,
+            effective_cell_size,
+        )
+        if grid_rows > 60 or grid_cols > 60:
+            ratio = max(grid_rows / 60, grid_cols / 60)
+            effective_cell_size = effective_cell_size * ratio
+            width_m, height_m, grid_rows, grid_cols, xs_half, ys_half = compute_metric_layout(
+                body.bbox.min_lon,
+                body.bbox.min_lat,
+                body.bbox.max_lon,
+                body.bbox.max_lat,
+                effective_cell_size,
+            )
+
+        # Step 2: Fetch OSM zoning and rasterize it to a numpy array (before grid)
         osm_bbox = OSMBoundingBox.model_validate(body.bbox.model_dump())
         try:
             feats = fetch_zoning_features(osm_bbox)
             grouped = bucket_polygons(feats)
             merged = merge_bucket_geometries(grouped)
-            zoning_arr = _build_zoning_mask(
-                lon0=body.bbox.min_lon,
-                lat0=body.bbox.min_lat,
-                xs_half=xs_half,
-                ys_half=ys_half,
-                merged_zoning=merged,
-            )
-            zoning_mask = [
-                [str(zoning_arr[i, j]) for j in range(zoning_arr.shape[1])]
-                for i in range(zoning_arr.shape[0])
-            ]
         except (httpx.HTTPError, Exception) as exc:
-            # OSM unavailable — degrade gracefully with an UNKNOWN zoning mask
-            # so the heatmap still renders (§5.2 conflict mask will be empty).
             import logging
             logging.getLogger("urbanacoustic").warning(
-                "OSM fetch failed, using empty zoning mask: %s", exc
+                "OSM fetch failed: %s", exc
             )
+            merged = {}
+
+        zoning_arr_np: np.ndarray | None = None
+        try:
+            if merged:
+                zoning_arr_np = _build_zoning_mask(
+                    lon0=body.bbox.min_lon,
+                    lat0=body.bbox.min_lat,
+                    xs_half=xs_half,
+                    ys_half=ys_half,
+                    merged_zoning=merged,
+                )
+        except Exception as exc:
+            import logging
+            logging.getLogger("urbanacoustic").warning(
+                "Zoning rasterization failed: %s", exc
+            )
+
+        # Step 3: Compute noise grid WITH barrier shadows (zoning mask available)
+        barrier_rings = [b.ring for b in body.barriers]
+        barrier_types = [b.type.value for b in body.barriers]
+        L_grid, xs_half, ys_half = compute_grid_levels_db(
+            body.bbox.min_lon,
+            body.bbox.min_lat,
+            body.bbox.max_lon,
+            body.bbox.max_lat,
+            effective_cell_size,
+            sources,
+            body.weighting,
+            A_abs=body.A_abs,
+            barriers=barrier_rings if barrier_rings else None,
+            barrier_types=barrier_types if barrier_rings else None,
+            zoning_mask=zoning_arr_np,
+        )
+        n_rows, n_cols = L_grid.shape
+
+        # Step 4: Build zoning_mask list for response
+        if zoning_arr_np is not None:
+            zoning_mask = [
+                [str(zoning_arr_np[i, j]) for j in range(zoning_arr_np.shape[1])]
+                for i in range(zoning_arr_np.shape[0])
+            ]
+        else:
             zoning_mask = [
                 [str(ZoningBucket.OTHER.value)] * n_cols for _ in range(n_rows)
             ]
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
+    # If zoning_mask was built inline, we still need it; if it's a placeholder from the
+    # else/except above it's already set. Now ensure it exists after the conditional block.
     grid_list = L_grid.tolist()
     return CalculateResponse(
         rows=n_rows,
@@ -233,6 +290,7 @@ def calculate(body: CalculateRequest) -> CalculateResponse:
         A_abs=body.A_abs,
         grid_db=grid_list,
         zoning_mask=zoning_mask,
+        barriers_applied=len(barrier_rings),
     )
 
 

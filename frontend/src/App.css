@@ -312,6 +312,52 @@
   backdrop-filter: blur(4px);
 }
 
+/* ── Pulse animation for conflict swatch ── */
+.pulse-swatch {
+  animation: pulse-opacity 2s ease-in-out infinite;
+}
+
+@keyframes pulse-opacity {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.85; }
+}
+
+/* ── Branding panel ── */
+.branding-panel {
+  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%) !important;
+  color: #f1f5f9;
+  border: none !important;
+}
+
+.branding-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.branding-subtitle {
+  font-size: 11px;
+  color: #94a3b8;
+  margin-top: 2px;
+}
+
+/* ── Info panel (weighting footer) ── */
+.info-panel {
+  background: rgba(241, 245, 249, 0.85) !important;
+}
+
+.info-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.info-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
 /* ── Victory row in Impact Summary ── */
 .victory-row {
   background: #f0fdf4;

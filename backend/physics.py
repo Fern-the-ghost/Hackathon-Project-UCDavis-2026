@@ -14,6 +14,8 @@ from typing import NamedTuple
 
 import numpy as np
 
+from backend.services.zoning_mapper import ZoningBucket
+
 
 class AcousticWeighting(str, Enum):
     """Active listening curve for absorption in decay (§3.2)."""
@@ -183,6 +185,89 @@ def lonlat_to_metric_offset(lon: float, lat: float, lon0: float, lat0: float) ->
     return float(xe[0]), float(yn[0])
 
 
+def _project_barriers_to_metric(
+    barriers: list[list[list[float]]],
+    lon0: float,
+    lat0: float,
+) -> list:
+    """Project barrier polygon rings from WGS84 to metric coords via shapely."""
+    from shapely.geometry import Polygon
+
+    metric_polys = []
+    for ring in barriers:
+        # ring is list of [lon, lat] pairs
+        xs, ys = lonlat_to_local_meters(
+            np.array([p[0] for p in ring], dtype=np.float64),
+            np.array([p[1] for p in ring], dtype=np.float64),
+            lon0,
+            lat0,
+        )
+        coords = list(zip(xs.tolist(), ys.tolist()))
+        metric_polys.append(Polygon(coords))
+    return metric_polys
+
+
+def apply_barrier_shadows(
+    sx_m: np.ndarray,
+    sy_m: np.ndarray,
+    CX: np.ndarray,
+    CY: np.ndarray,
+    levels_db: np.ndarray,
+    zoning_mask: np.ndarray,
+    barriers: list,
+    barrier_types: list[str] | None = None,
+    lon0: float = 0.0,
+    lat0: float = 0.0,
+    shadow_db: float = 20.0,
+) -> np.ndarray:
+    """Apply §3.5 barrier shadow: for residential cells whose ray from source
+    intersects any barrier polygon, subtract ``shadow_db`` from that source's
+    contribution.
+
+    Concrete barriers: -20 dB reduction.
+    Green (vegetation) barriers: -12 dB reduction.
+
+    Args:
+        sx_m, sy_m: source metric coords, shape (n_sources,)
+        CX, CY: cell-center metric coords, shape (n_rows, n_cols)
+        levels_db: per-source levels, shape (n_sources, n_rows, n_cols)
+        zoning_mask: per-cell zoning, shape (n_rows, n_cols)
+        barriers: list of shapely Polygon objects in metric coords
+        barrier_types: list of 'concrete' or 'green' strings, same length as barriers
+        lon0, lat0: metric origin (unused, kept for signature compat)
+
+    Returns:
+        levels_db with shadowed residential cells reduced by shadow_db.
+    """
+    if not barriers:
+        return levels_db
+
+    from shapely.geometry import LineString
+
+    n_sources, n_rows, n_cols = levels_db.shape
+    residential_mask = zoning_mask == str(ZoningBucket.RESIDENTIAL.value)
+
+    # Per-barrier shadow dB
+    shadow_map = {'concrete': 20.0, 'green': 12.0}
+
+    # For each source, for each cell that is residential:
+    for s_idx in range(n_sources):
+        s_point_xy = (float(sx_m[s_idx]), float(sy_m[s_idx]))
+        for i in range(n_rows):
+            for j in range(n_cols):
+                if not residential_mask[i, j]:
+                    continue
+                c_point_xy = (float(CX[i, j]), float(CY[i, j]))
+                ray = LineString([s_point_xy, c_point_xy])
+                for b_idx, barrier_poly in enumerate(barriers):
+                    if ray.intersects(barrier_poly):
+                        b_type = barrier_types[b_idx] if barrier_types else 'concrete'
+                        reduction = shadow_map.get(b_type, 20.0)
+                        levels_db[s_idx, i, j] -= reduction
+                        break  # one barrier credit per source path
+    return levels_db
+
+
 def compute_grid_levels_db(
     min_lon: float,
     min_lat: float,
@@ -192,9 +277,15 @@ def compute_grid_levels_db(
     sources: list[NoiseSourceInput],
     weighting: AcousticWeighting,
     A_abs: float = 0.0,
+    barriers: list[list[list[float]]] | None = None,
+    barrier_types: list[str] | None = None,
+    zoning_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
     Build a metric-aligned grid over the bbox and return L_total [dB] per cell.
+
+    If ``barriers`` (list of WGS84 ring coords) and ``zoning_mask`` are provided,
+    §3.5 barrier shadow is applied to residential cells.
 
     Returns:
         L_grid: shape (n_rows, n_cols)
@@ -240,6 +331,20 @@ def compute_grid_levels_db(
     levels = Lrefs[:, np.newaxis, np.newaxis] - 20.0 * np.log10(
         np.maximum(dist, 1e-9)
     ) - A_eff
+
+    # §3.5 barrier shadow
+    if barriers and zoning_mask is not None:
+        metric_polys = _project_barriers_to_metric(barriers, lon0, lat0)
+        import logging
+        logging.getLogger("urbanacoustic").info(
+            "Barrier shadow: projecting %d barriers, applying to grid %dx%d",
+            len(metric_polys), n_rows, n_cols,
+        )
+        levels = apply_barrier_shadows(
+            sx_m, sy_m, CX, CY, levels, zoning_mask, metric_polys,
+            barrier_types=barrier_types,
+            lon0=lon0, lat0=lat0,
+        )
 
     levels_stacked = np.moveaxis(levels, 0, -1)
     L_grid = energy_sum_db(levels_stacked)

@@ -77,6 +77,7 @@ export function gridToNoisePolygons(
   rows: number,
   cols: number,
   gridDb: number[][],
+  zoningMask?: string[][],
 ): GeoJSON.FeatureCollection {
   const { width_m, height_m, lon0, lat0 } = metricExtent(bbox)
   const dx = width_m / cols
@@ -101,9 +102,10 @@ export function gridToNoisePolygons(
       const [lon2_cc, lat2_cc] = localMetersToLonLat(x1, y1, lon0, lat0)
       const [lon3_cc, lat3_cc] = localMetersToLonLat(x0, y1, lon0, lat0)
 
+      const zone = zoningMask?.[i]?.[j] ?? 'Unknown'
       features.push({
         type: 'Feature',
-        properties: { db },
+        properties: { db, zone },
         geometry: {
           type: 'Polygon',
           coordinates: [[
