@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from 'react'
+import { useMemo, useCallback, useState } from 'react'
 import { DeckGL } from '@deck.gl/react'
 import { GeoJsonLayer } from '@deck.gl/layers'
 import { Map } from 'react-map-gl/mapbox'
@@ -109,6 +109,14 @@ function drawPointsToGeoJSON(points: [number, number][]): GeoJSON.FeatureCollect
   }
 }
 
+/** Risk descriptor based on dB level. */
+function riskDescriptor(db: number): string {
+  if (db < 45) return 'Safe'
+  if (db < 55) return 'Moderate'
+  if (db < 65) return 'High Risk'
+  return 'Violation'
+}
+
 export function PlanningMap({
   mapboxToken,
   noisePolygons,
@@ -123,6 +131,8 @@ export function PlanningMap({
   onMapClick,
   toastMessage,
 }: PlanningMapProps) {
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; text: string } | null>(null)
+
   const initialViewState: MapViewState = useMemo(() => {
     const c = bboxCenter(DEFAULT_BBOX)
     return {
@@ -143,18 +153,36 @@ export function PlanningMap({
     onMapClick([lng, lat])
   }, [drawingMode, onMapClick])
 
+  const handleHover = useCallback((info: PickingInfo) => {
+    if (info.picked && info.object) {
+      const props = (info.object as GeoJSON.Feature).properties as Record<string, unknown> | null
+      const db = props?.db as number | undefined
+      if (db !== undefined && info.x !== undefined && info.y !== undefined) {
+        const desc = riskDescriptor(db)
+        setTooltip({
+          x: info.x,
+          y: info.y,
+          text: `Noise Level: ${db.toFixed(1)} dB · ${desc}`,
+        })
+        return
+      }
+    }
+    setTooltip(null)
+  }, [])
+
   const layers = useMemo(
     () => [
-      // §5.1 Noise grid
+      // §5.1 Noise grid — pickable for tooltip
       new GeoJsonLayer({
         id: 'urbanacoustic-noise-grid',
         data: noisePolygons,
         filled: true,
-        opacity: 0.6,
+        opacity: 0.7,
         getFillColor: (f: GeoJSON.Feature) =>
           dbColor((f.properties as { db?: number })?.db ?? 0),
         stroked: false,
-        pickable: false,
+        pickable: true,
+        onHover: handleHover,
       }),
 
       // §5.2 Conflict mask
@@ -207,7 +235,7 @@ export function PlanningMap({
         pickable: false,
       }),
     ],
-    [noisePolygons, conflictMask, barrierFeatures, drawPreview],
+    [noisePolygons, conflictMask, barrierFeatures, drawPreview, handleHover],
   )
 
   return (
@@ -221,18 +249,38 @@ export function PlanningMap({
       >
         <Map
           mapboxAccessToken={mapboxToken}
-          mapStyle="mapbox://styles/mapbox/light-v11"
+          mapStyle="mapbox://styles/mapbox/dark-v11"
           reuseMaps
           cursor={drawingMode ? 'crosshair' : undefined}
         />
       </DeckGL>
+
+      {/* Loading overlay */}
+      {loading && (
+        <div className="loading-overlay">
+          <div className="loading-spinner" />
+          <span className="loading-text">Simulating Acoustic Propagation...</span>
+        </div>
+      )}
+
+      {/* Tooltip */}
+      {tooltip && (
+        <div
+          className="tooltip-popup"
+          style={{
+            left: tooltip.x + 12,
+            top: tooltip.y - 10,
+          }}
+        >
+          {tooltip.text}
+        </div>
+      )}
 
       <div className="map-overlay-top">
         <div className="title-chip">
           <strong>UrbanAcoustic</strong>
           <span className="muted">§5.1 noise grid · {weightingLabel}</span>
         </div>
-        {loading ? <div className="status-chip">Loading grid…</div> : null}
         {errorText ? <div className="error-chip">{errorText}</div> : null}
         {toastMessage ? <div className="toast-chip">{toastMessage}</div> : null}
       </div>
