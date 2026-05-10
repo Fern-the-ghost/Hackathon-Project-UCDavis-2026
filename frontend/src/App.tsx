@@ -6,6 +6,7 @@ import {
   DEFAULT_SOURCES,
 } from './config/noiseMap'
 import { postCalculate } from './lib/api'
+import type { BarrierRing } from './lib/api'
 import { bboxCenter, gridToConflictMask, gridToNoisePolygons } from './lib/geo'
 
 import './App.css'
@@ -24,9 +25,14 @@ function App() {
   }))
   const [conflictMask, setConflictMask] = useState<GeoJSON.FeatureCollection | null>(null)
   const [conflictStats, setConflictStats] = useState({ cellCount: 0, areaHa: 0, population: 0 })
+  const [baselineCells, setBaselineCells] = useState<number | null>(null)
   const [weighting, setWeighting] = useState<'DBA' | 'DBC'>('DBA')
   const [loading, setLoading] = useState(true)
   const [errorText, setErrorText] = useState<string | null>(null)
+  const [barriers, setBarriers] = useState<BarrierRing[]>([])
+  const [drawingMode, setDrawingMode] = useState(false)
+  const [drawPoints, setDrawPoints] = useState<[number, number][]>([])
+  const [savedResidents, setSavedResidents] = useState(0)
 
   const cellSizeM = 85
 
@@ -37,8 +43,9 @@ function App() {
       weighting,
       cell_size_m: cellSizeM,
       A_abs: 8.0,
+      barriers: barriers.length > 0 ? barriers : undefined,
     }),
-    [weighting],
+    [weighting, barriers],
   )
 
   useEffect(() => {
@@ -72,6 +79,16 @@ function App() {
         const areaHa = (cellCount * data.cell_size_m * data.cell_size_m) / 10000
         const population = Math.round(cellCount * POPULATION_PER_CELL)
         setConflictStats({ cellCount, areaHa, population })
+
+        // Save baseline (0 barriers) on first load, compute saved residents from difference
+        if (baselineCells === null) {
+          setBaselineCells(cellCount)
+          setSavedResidents(0)
+        } else if (barriers.length > 0 && cellCount < baselineCells) {
+          setSavedResidents(Math.round((baselineCells - cellCount) * POPULATION_PER_CELL))
+        } else {
+          setSavedResidents(0)
+        }
       } catch (err) {
         if (!cancelled) {
           setErrorText(err instanceof Error ? err.message : String(err))
@@ -85,6 +102,34 @@ function App() {
       cancelled = true
     }
   }, [requestBody])
+
+  function handleMapClick(lonlat: [number, number]) {
+    if (!drawingMode) return
+    const next = [...drawPoints, lonlat]
+    if (next.length === 2) {
+      const [p0, p1] = next
+      const ring: [number, number][] = [
+        [p0[0], p0[1]],
+        [p1[0], p0[1]],
+        [p1[0], p1[1]],
+        [p0[0], p1[1]],
+        [p0[0], p0[1]],
+      ]
+      setBarriers(prev => [...prev, { ring }])
+      setDrawPoints([])
+      setDrawingMode(false)
+    } else {
+      setDrawPoints(next)
+    }
+  }
+
+  function clearBarriers() {
+    setBarriers([])
+    setDrawPoints([])
+    setSavedResidents(0)
+    // Reset baseline so next load re-captures it
+    setBaselineCells(null)
+  }
 
   if (!MAPBOX_TOKEN.trim()) {
     return (
@@ -113,6 +158,10 @@ function App() {
         weightingLabel={weighting}
         loading={loading}
         errorText={errorText}
+        barriers={barriers}
+        drawingMode={drawingMode}
+        drawPoints={drawPoints}
+        onMapClick={handleMapClick}
       />
 
       <aside className="controls-rail">
@@ -139,6 +188,40 @@ function App() {
           </p>
         </div>
 
+        <div className="panel" style={{ marginTop: 12 }}>
+          <div className="panel-title">Buffer optimizer (§3.5)</div>
+          <button
+            type="button"
+            style={{
+              width: '100%', borderRadius: 10, border: '1px solid #cbd5e1',
+              background: drawingMode ? '#0f172a' : '#f8fafc',
+              color: drawingMode ? '#f8fafc' : '#0f172a',
+              padding: '8px 10px', cursor: 'pointer', fontWeight: 600,
+            }}
+            onClick={() => { setDrawingMode(!drawingMode); setDrawPoints([]) }}
+          >
+            {drawingMode ? 'Cancel' : 'Place barrier'}
+          </button>
+          {drawingMode && (
+            <p className="muted small" style={{ marginTop: 8 }}>
+              Click two map corners to place a rectangular buffer barrier.
+            </p>
+          )}
+          {barriers.length > 0 && (
+            <button
+              type="button"
+              onClick={clearBarriers}
+              style={{
+                width: '100%', borderRadius: 10, border: '1px solid #e74c3c',
+                background: '#fef2f2', color: '#7f1d1d',
+                padding: '8px 10px', cursor: 'pointer', fontWeight: 600, marginTop: 8,
+              }}
+            >
+              Clear barriers ({barriers.length})
+            </button>
+          )}
+        </div>
+
         <div className="panel impact-summary" style={{ marginTop: 12 }}>
           <div className="panel-title">Impact summary</div>
           {conflictStats.cellCount > 0 ? (
@@ -158,6 +241,12 @@ function App() {
             </>
           ) : (
             <p className="muted small">No residential conflicts above {CONFLICT_THRESHOLD_DB} dB.</p>
+          )}
+          {savedResidents > 0 && (
+            <div className="metric-row" style={{ borderBottom: 'none', marginTop: 4 }}>
+              <span className="metric-label" style={{ color: '#059669' }}>Residents saved</span>
+              <span className="metric-value" style={{ color: '#059669' }}>~{savedResidents}</span>
+            </div>
           )}
         </div>
       </aside>

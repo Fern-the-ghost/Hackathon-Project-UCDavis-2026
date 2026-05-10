@@ -10,12 +10,17 @@ export type NoiseSourcePayload = {
   cooling_mw?: number
 }
 
+export type BarrierRing = {
+  ring: number[][]
+}
+
 export type CalculateRequest = {
   bbox: BBox
   sources: NoiseSourcePayload[]
   weighting: AcousticWeighting
   cell_size_m: number
   A_abs?: number
+  barriers?: BarrierRing[]
 }
 
 export type CalculateResponse = {
@@ -26,6 +31,7 @@ export type CalculateResponse = {
   A_abs: number
   grid_db: number[][]
   zoning_mask: string[][]
+  barriers_applied: number
 }
 
 export async function postCalculate(

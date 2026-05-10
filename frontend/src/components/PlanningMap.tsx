@@ -1,14 +1,15 @@
-import { useMemo } from 'react'
+import { useMemo, useCallback } from 'react'
 import { DeckGL } from '@deck.gl/react'
 import { GeoJsonLayer } from '@deck.gl/layers'
 import { Map } from 'react-map-gl/mapbox'
-import type { MapViewState } from '@deck.gl/core'
+import type { MapViewState, PickingInfo } from '@deck.gl/core'
 import 'mapbox-gl/dist/mapbox-gl.css'
 
 import {
   DEFAULT_BBOX,
   HEATMAP_COLOR_RANGE,
 } from '../config/noiseMap'
+import type { BarrierRing } from '../lib/api'
 import { bboxCenter } from '../lib/geo'
 
 type ConflictStats = {
@@ -25,23 +26,19 @@ type PlanningMapProps = {
   weightingLabel: string
   loading?: boolean
   errorText?: string | null
+  barriers: BarrierRing[]
+  drawingMode: boolean
+  drawPoints: [number, number][]
+  onMapClick: (lonlat: [number, number]) => void
 }
 
-/** §5.1 / §5.2 dB → RGBA color ramp.
- *
- *  ≤40 dB → transparent [0,0,0,0]
- *  40-45 dB → green
- *  45-50 dB → yellow
- *  50-55 dB → orange
- *  ≥55 dB → red
- *
- *  Linear interpolation between stops for smooth transitions. */
+/** §5.1 / §5.2 dB → RGBA color ramp. */
 function dbColor(db: number): [number, number, number, number] {
   const stops: [number, [number, number, number, number]][] = [
-    [40, HEATMAP_COLOR_RANGE[1]],   // green
-    [45, HEATMAP_COLOR_RANGE[2]],   // yellow
-    [50, HEATMAP_COLOR_RANGE[3]],   // orange
-    [55, HEATMAP_COLOR_RANGE[4]],   // red
+    [40, HEATMAP_COLOR_RANGE[1]],
+    [45, HEATMAP_COLOR_RANGE[2]],
+    [50, HEATMAP_COLOR_RANGE[3]],
+    [55, HEATMAP_COLOR_RANGE[4]],
   ]
 
   if (db <= 40) return [0, 0, 0, 0]
@@ -63,6 +60,54 @@ function dbColor(db: number): [number, number, number, number] {
   return stops[3][1]
 }
 
+/** Convert barrier rings to GeoJSON polygons for display. */
+function barriersToGeoJSON(barriers: BarrierRing[]): GeoJSON.FeatureCollection {
+  return {
+    type: 'FeatureCollection',
+    features: barriers.map((b) => ({
+      type: 'Feature',
+      properties: {},
+      geometry: {
+        type: 'Polygon',
+        coordinates: [b.ring],
+      },
+    })),
+  }
+}
+
+/** Build a draw-preview polygon from two corner clicks. */
+function drawPointsToGeoJSON(points: [number, number][]): GeoJSON.FeatureCollection {
+  if (points.length < 1) return { type: 'FeatureCollection', features: [] }
+  if (points.length === 1) {
+    // Single point: show as a small dot
+    return {
+      type: 'FeatureCollection',
+      features: [{
+        type: 'Feature',
+        properties: {},
+        geometry: { type: 'Point', coordinates: points[0] },
+      }],
+    }
+  }
+  // Two points: show the diagonal preview
+  const [p0, p1] = points
+  const ring: number[][] = [
+    [p0[0], p0[1]],
+    [p1[0], p0[1]],
+    [p1[0], p1[1]],
+    [p0[0], p1[1]],
+    [p0[0], p0[1]],
+  ]
+  return {
+    type: 'FeatureCollection',
+    features: [{
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'Polygon', coordinates: [ring] },
+    }],
+  }
+}
+
 export function PlanningMap({
   mapboxToken,
   noisePolygons,
@@ -71,6 +116,10 @@ export function PlanningMap({
   weightingLabel,
   loading,
   errorText,
+  barriers,
+  drawingMode,
+  drawPoints,
+  onMapClick,
 }: PlanningMapProps) {
   const initialViewState: MapViewState = useMemo(() => {
     const c = bboxCenter(DEFAULT_BBOX)
@@ -83,9 +132,18 @@ export function PlanningMap({
     }
   }, [])
 
+  const barrierFeatures = useMemo(() => barriersToGeoJSON(barriers), [barriers])
+  const drawPreview = useMemo(() => drawPointsToGeoJSON(drawPoints), [drawPoints])
+
+  const handleClick = useCallback((info: PickingInfo) => {
+    if (!drawingMode || !info.coordinate) return
+    const [lng, lat] = info.coordinate as [number, number]
+    onMapClick([lng, lat])
+  }, [drawingMode, onMapClick])
+
   const layers = useMemo(
     () => [
-      // §5.1 Noise grid — semi-transparent data layer showing streets through the grid.
+      // §5.1 Noise grid
       new GeoJsonLayer({
         id: 'urbanacoustic-noise-grid',
         data: noisePolygons,
@@ -97,7 +155,7 @@ export function PlanningMap({
         pickable: false,
       }),
 
-      // §5.2 Conflict mask — bold red fill + dark red stroke to pop as specific alerts.
+      // §5.2 Conflict mask
       new GeoJsonLayer({
         id: 'urbanacoustic-conflict-mask',
         data: conflictMask ?? { type: 'FeatureCollection', features: [] },
@@ -110,8 +168,34 @@ export function PlanningMap({
         opacity: 0.7,
         pickable: false,
       }),
+
+      // §3.5 Barrier footprints — teal outlined fill
+      new GeoJsonLayer({
+        id: 'urbanacoustic-barriers',
+        data: barrierFeatures,
+        filled: true,
+        getFillColor: [20, 184, 166, 120],
+        getLineColor: [13, 148, 136, 230],
+        lineWidthUnits: 'pixels',
+        lineWidthMinPixels: 2,
+        stroked: true,
+        pickable: false,
+      }),
+
+      // Draw preview line/polygon
+      new GeoJsonLayer({
+        id: 'urbanacoustic-draw-preview',
+        data: drawPreview,
+        filled: true,
+        getFillColor: [20, 184, 166, 80],
+        getLineColor: [13, 148, 136, 200],
+        lineWidthUnits: 'pixels',
+        lineWidthMinPixels: 1,
+        stroked: true,
+        pickable: false,
+      }),
     ],
-    [noisePolygons, conflictMask],
+    [noisePolygons, conflictMask, barrierFeatures, drawPreview],
   )
 
   return (
@@ -121,11 +205,13 @@ export function PlanningMap({
         controller
         layers={layers}
         style={{ width: '100%', height: '100%' }}
+        onClick={handleClick}
       >
         <Map
           mapboxAccessToken={mapboxToken}
           mapStyle="mapbox://styles/mapbox/light-v11"
           reuseMaps
+          cursor={drawingMode ? 'crosshair' : undefined}
         />
       </DeckGL>
 
@@ -152,6 +238,16 @@ export function PlanningMap({
             <div className="legend-conflict">
               <span className="conflict-swatch" />
               <span className="muted small">Residential {'>'} 45 dB (Violation Area)</span>
+            </div>
+          </>
+        ) : null}
+
+        {barriers.length > 0 ? (
+          <>
+            <hr className="legend-divider" />
+            <div className="legend-conflict">
+              <span className="barrier-swatch" />
+              <span className="muted small">Barrier buffer ({barriers.length})</span>
             </div>
           </>
         ) : null}
