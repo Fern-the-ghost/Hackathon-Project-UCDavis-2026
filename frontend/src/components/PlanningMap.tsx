@@ -11,10 +11,17 @@ import {
 } from '../config/noiseMap'
 import { bboxCenter } from '../lib/geo'
 
+type ConflictStats = {
+  cellCount: number
+  areaHa: number
+  population: number
+}
+
 type PlanningMapProps = {
   mapboxToken: string
   noisePolygons: GeoJSON.FeatureCollection
   conflictMask: GeoJSON.FeatureCollection | null
+  conflictStats: ConflictStats
   weightingLabel: string
   loading?: boolean
   errorText?: string | null
@@ -60,6 +67,7 @@ export function PlanningMap({
   mapboxToken,
   noisePolygons,
   conflictMask,
+  conflictStats,
   weightingLabel,
   loading,
   errorText,
@@ -137,6 +145,16 @@ export function PlanningMap({
           <span>{'<'} 40 dB (quiet)</span>
           <span>{'>'} 55 dB (loud)</span>
         </div>
+
+        {conflictStats.cellCount > 0 ? (
+          <>
+            <hr className="legend-divider" />
+            <div className="legend-conflict">
+              <span className="conflict-swatch" />
+              <span className="muted small">Residential {'>'} 45 dB (Violation Area)</span>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   )
