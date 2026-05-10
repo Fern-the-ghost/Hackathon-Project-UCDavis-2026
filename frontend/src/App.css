@@ -86,12 +86,15 @@
   position: absolute;
   top: 0;
   right: 0;
-  height: 100%;
+  height: 100vh;
   width: 220px;
   z-index: 3;
   padding: 16px 14px;
   box-sizing: border-box;
   pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
 }
 
 .controls-rail .panel {
@@ -100,6 +103,11 @@
   border-radius: 12px;
   padding: 14px;
   box-shadow: 0 12px 38px rgba(15, 23, 42, 0.14);
+  flex-shrink: 0;
+}
+
+.controls-rail .panel:last-child {
+  margin-bottom: 2rem;
 }
 
 .panel-title {
