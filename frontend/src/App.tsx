@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { PlanningMap } from './components/PlanningMap'
 import {
@@ -26,7 +26,6 @@ function App() {
   }))
   const [conflictMask, setConflictMask] = useState<GeoJSON.FeatureCollection | null>(null)
   const [conflictStats, setConflictStats] = useState({ cellCount: 0, areaHa: 0, population: 0 })
-  const [baselineCells, setBaselineCells] = useState<number | null>(null)
   const [baselineStats, setBaselineStats] = useState<{ cellCount: number; areaHa: number; population: number } | null>(null)
   const [weighting, setWeighting] = useState<'DBA' | 'DBC'>('DBA')
   const [loading, setLoading] = useState(true)
@@ -39,6 +38,10 @@ function App() {
   const [showToast, setShowToast] = useState(false)
   const [ecoScore, setEcoScore] = useState(0)
   const [zoningData, setZoningData] = useState<string[][] | null>(null)
+
+  // Track whether the baseline has been initialized from a no-barrier fetch.
+  // Once set, it persists until weighting changes or barriers are cleared.
+  const baselineInitialized = useRef(false)
 
   const cellSizeM = 85
 
@@ -92,13 +95,15 @@ function App() {
         const currentStats = { cellCount, areaHa, population }
         setConflictStats(currentStats)
 
-        // Save baseline (0 barriers) on first load
-        if (baselineCells === null) {
-          setBaselineCells(cellCount)
+        // Baseline: set ONCE on the first successful no-barrier fetch.
+        // Never overwrite it — it persists across barrier placements.
+        if (!baselineInitialized.current && barriers.length === 0) {
+          baselineInitialized.current = true
           setBaselineStats(currentStats)
           setSavedResidents(0)
-        } else if (barriers.length > 0 && cellCount < baselineCells) {
-          const saved = Math.round((baselineCells - cellCount) * POPULATION_PER_CELL)
+        } else if (baselineInitialized.current && barriers.length > 0 && baselineStats !== null) {
+          // Barriers are active — compare against stored baseline
+          const saved = Math.max(0, Math.round((baselineStats.cellCount - cellCount) * POPULATION_PER_CELL))
           setSavedResidents(saved)
           if (saved > 0) {
             setShowToast(true)
@@ -164,9 +169,15 @@ function App() {
     setSavedResidents(0)
     setShowToast(false)
     setEcoScore(0)
-    setBaselineCells(null)
+    baselineInitialized.current = false
     setBaselineStats(null)
   }
+
+  // Determine if conflict cells decreased (green) or increased (red)
+  const conflictChange = baselineStats !== null && barriers.length > 0
+    ? conflictStats.cellCount - baselineStats.cellCount
+    : 0
+  const conflictColor = conflictChange < 0 ? '#059669' : conflictChange > 0 ? '#dc2626' : '#0f172a'
 
   if (!MAPBOX_TOKEN.trim()) {
     return (
@@ -297,7 +308,7 @@ function App() {
             <>
               <div className="metric-row">
                 <span className="metric-label">Conflict area</span>
-                <span className="metric-value">
+                <span className="metric-value" style={{ color: conflictColor }}>
                   {barriers.length > 0 && baselineStats ? (
                     <><s>{baselineStats.areaHa.toFixed(1)}</s> {conflictStats.areaHa.toFixed(1)} ha</>
                   ) : (
@@ -307,7 +318,7 @@ function App() {
               </div>
               <div className="metric-row">
                 <span className="metric-label">Affected residents (est.)</span>
-                <span className="metric-value">
+                <span className="metric-value" style={{ color: conflictColor }}>
                   {barriers.length > 0 && baselineStats ? (
                     <><s>~{baselineStats.population}</s> ~{conflictStats.population}</>
                   ) : (
@@ -317,7 +328,7 @@ function App() {
               </div>
               <div className="metric-row">
                 <span className="metric-label">Conflict cells</span>
-                <span className="metric-value">
+                <span className="metric-value" style={{ color: conflictColor }}>
                   {barriers.length > 0 && baselineStats ? (
                     <><s>{baselineStats.cellCount}</s> {conflictStats.cellCount}</>
                   ) : (
