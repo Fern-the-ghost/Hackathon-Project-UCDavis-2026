@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { PlanningMap } from './components/PlanningMap'
 import {
@@ -18,6 +18,7 @@ const API_BASE =
 const POPULATION_PER_CELL = 2.5
 const CONFLICT_THRESHOLD_DB = 45
 const ECO_SCORE_PER_100M_GREEN = 15
+const FETCH_DEBOUNCE_MS = 300
 
 function App() {
   const [noisePolygons, setNoisePolygons] = useState<GeoJSON.FeatureCollection>(() => ({
@@ -27,6 +28,7 @@ function App() {
   const [conflictMask, setConflictMask] = useState<GeoJSON.FeatureCollection | null>(null)
   const [conflictStats, setConflictStats] = useState({ cellCount: 0, areaHa: 0, population: 0 })
   const [baselineStats, setBaselineStats] = useState<{ cellCount: number; areaHa: number; population: number } | null>(null)
+  const [baselineReady, setBaselineReady] = useState(false)
   const [weighting, setWeighting] = useState<'DBA' | 'DBC'>('DBA')
   const [loading, setLoading] = useState(true)
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -42,6 +44,9 @@ function App() {
   // Track whether the baseline has been initialized from a no-barrier fetch.
   // Once set, it persists until weighting changes or barriers are cleared.
   const baselineInitialized = useRef(false)
+
+  // Debounce: track the last fetch timestamp to prevent rapid overlapping requests.
+  const lastFetchMs = useRef(0)
 
   const cellSizeM = 85
 
@@ -60,6 +65,12 @@ function App() {
   useEffect(() => {
     let cancelled = false
     async function load() {
+      // Debounce: wait 300ms before firing, cancel if a newer request comes in
+      const now = Date.now()
+      lastFetchMs.current = now
+      await new Promise((r) => setTimeout(r, FETCH_DEBOUNCE_MS))
+      if (cancelled || lastFetchMs.current !== now) return
+
       setLoading(true)
       setErrorText(null)
       try {
@@ -100,6 +111,7 @@ function App() {
         if (!baselineInitialized.current && barriers.length === 0) {
           baselineInitialized.current = true
           setBaselineStats(currentStats)
+          setBaselineReady(true)
           setSavedResidents(0)
         } else if (baselineInitialized.current && barriers.length > 0 && baselineStats !== null) {
           // Barriers are active — compare against stored baseline
@@ -143,6 +155,21 @@ function App() {
     }
   }, [requestBody])
 
+  // Weighting switch: reset baseline and force a fresh baseline fetch
+  const handleWeightingChange = useCallback((newWeighting: 'DBA' | 'DBC') => {
+    if (newWeighting === weighting) return
+    // Clear barriers and baseline so the next fetch re-initializes
+    setBarriers([])
+    setDrawPoints([])
+    setSavedResidents(0)
+    setShowToast(false)
+    setEcoScore(0)
+    baselineInitialized.current = false
+    setBaselineStats(null)
+    setBaselineReady(false)
+    setWeighting(newWeighting)
+  }, [weighting])
+
   function handleMapClick(lonlat: [number, number]) {
     if (!drawingMode) return
     const next = [...drawPoints, lonlat]
@@ -171,6 +198,7 @@ function App() {
     setEcoScore(0)
     baselineInitialized.current = false
     setBaselineStats(null)
+    setBaselineReady(false)
   }
 
   // Determine if conflict cells decreased (green) or increased (red)
@@ -178,6 +206,9 @@ function App() {
     ? conflictStats.cellCount - baselineStats.cellCount
     : 0
   const conflictColor = conflictChange < 0 ? '#059669' : conflictChange > 0 ? '#dc2626' : '#0f172a'
+
+  // Show "Loading Metrics..." when baseline hasn't been established yet
+  const showLoadingMetrics = !baselineReady && barriers.length === 0 && loading
 
   if (!MAPBOX_TOKEN.trim()) {
     return (
@@ -230,14 +261,14 @@ function App() {
             <button
               type="button"
               className={weighting === 'DBA' ? 'active' : ''}
-              onClick={() => setWeighting('DBA')}
+              onClick={() => handleWeightingChange('DBA')}
             >
               dBA
             </button>
             <button
               type="button"
               className={weighting === 'DBC' ? 'active' : ''}
-              onClick={() => setWeighting('DBC')}
+              onClick={() => handleWeightingChange('DBC')}
             >
               dBC
             </button>
@@ -272,15 +303,17 @@ function App() {
 
           <button
             type="button"
+            disabled={!baselineReady}
             style={{
               width: '100%', borderRadius: 10, border: '1px solid #cbd5e1',
-              background: drawingMode ? '#0f172a' : '#f8fafc',
-              color: drawingMode ? '#f8fafc' : '#0f172a',
-              padding: '8px 10px', cursor: 'pointer', fontWeight: 600,
+              background: !baselineReady ? '#e2e8f0' : drawingMode ? '#0f172a' : '#f8fafc',
+              color: !baselineReady ? '#94a3b8' : drawingMode ? '#f8fafc' : '#0f172a',
+              padding: '8px 10px', cursor: !baselineReady ? 'not-allowed' : 'pointer',
+              fontWeight: 600,
             }}
-            onClick={() => { setDrawingMode(!drawingMode); setDrawPoints([]) }}
+            onClick={() => { if (baselineReady) { setDrawingMode(!drawingMode); setDrawPoints([]) } }}
           >
-            {drawingMode ? 'Cancel' : 'Place barrier'}
+            {!baselineReady ? 'Loading baseline...' : drawingMode ? 'Cancel' : 'Place barrier'}
           </button>
           {drawingMode && (
             <p className="muted small" style={{ marginTop: 8 }}>
@@ -304,7 +337,9 @@ function App() {
 
         <div className="panel impact-summary" style={{ marginTop: 8 }}>
           <div className="panel-title">Impact summary</div>
-          {conflictStats.cellCount > 0 ? (
+          {showLoadingMetrics ? (
+            <p className="muted small">Loading Metrics...</p>
+          ) : conflictStats.cellCount > 0 ? (
             <>
               <div className="metric-row">
                 <span className="metric-label">Conflict area</span>
