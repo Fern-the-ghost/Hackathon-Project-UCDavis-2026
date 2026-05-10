@@ -218,6 +218,16 @@
   flex-shrink: 0;
 }
 
+.green-swatch {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: rgba(22, 163, 74, 0.7);
+  border: 2px solid rgba(5, 100, 40, 0.9);
+  flex-shrink: 0;
+}
+
 /* ── Victory toast ── */
 .toast-chip {
   pointer-events: none;

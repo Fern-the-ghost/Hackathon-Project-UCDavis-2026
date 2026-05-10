@@ -6,7 +6,7 @@ import {
   DEFAULT_SOURCES,
 } from './config/noiseMap'
 import { postCalculate } from './lib/api'
-import type { BarrierRing } from './lib/api'
+import type { BarrierRing, BarrierType } from './lib/api'
 import { bboxCenter, gridToConflictMask, gridToNoisePolygons } from './lib/geo'
 
 import './App.css'
@@ -17,6 +17,7 @@ const API_BASE =
 
 const POPULATION_PER_CELL = 2.5
 const CONFLICT_THRESHOLD_DB = 45
+const ECO_SCORE_PER_100M_GREEN = 15
 
 function App() {
   const [noisePolygons, setNoisePolygons] = useState<GeoJSON.FeatureCollection>(() => ({
@@ -30,10 +31,12 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [errorText, setErrorText] = useState<string | null>(null)
   const [barriers, setBarriers] = useState<BarrierRing[]>([])
+  const [barrierType, setBarrierType] = useState<BarrierType>('concrete')
   const [drawingMode, setDrawingMode] = useState(false)
   const [drawPoints, setDrawPoints] = useState<[number, number][]>([])
   const [savedResidents, setSavedResidents] = useState(0)
   const [showToast, setShowToast] = useState(false)
+  const [ecoScore, setEcoScore] = useState(0)
 
   const cellSizeM = 85
 
@@ -95,6 +98,24 @@ function App() {
         } else {
           setSavedResidents(0)
         }
+
+        // Compute eco-score: +15% per 100m of green wall perimeter
+        let score = 0
+        for (const b of barriers) {
+          if (b.type === 'green') {
+            // Approximate perimeter from ring coords (WGS84 → rough meters)
+            let perimM = 0
+            for (let i = 0; i < b.ring.length - 1; i++) {
+              const [lng1, lat1] = b.ring[i]
+              const [lng2, lat2] = b.ring[i + 1]
+              const dlat = (lat2 - lat1) * 111320
+              const dlng = (lng2 - lng1) * 111320 * Math.cos((lat1 + lat2) / 2 * (Math.PI / 180))
+              perimM += Math.sqrt(dlat * dlat + dlng * dlng)
+            }
+            score += Math.round((perimM / 100) * ECO_SCORE_PER_100M_GREEN)
+          }
+        }
+        setEcoScore(score)
       } catch (err) {
         if (!cancelled) {
           setErrorText(err instanceof Error ? err.message : String(err))
@@ -121,7 +142,7 @@ function App() {
         [p0[0], p1[1]],
         [p0[0], p0[1]],
       ]
-      setBarriers(prev => [...prev, { ring }])
+      setBarriers(prev => [...prev, { ring, type: barrierType }])
       setDrawPoints([])
       setDrawingMode(false)
     } else {
@@ -134,6 +155,7 @@ function App() {
     setDrawPoints([])
     setSavedResidents(0)
     setShowToast(false)
+    setEcoScore(0)
     // Reset baseline so next load re-captures it
     setBaselineCells(null)
   }
@@ -202,6 +224,27 @@ function App() {
 
         <div className="panel" style={{ marginTop: 12 }}>
           <div className="panel-title">Buffer optimizer (§3.5)</div>
+
+          {/* Barrier type toggle */}
+          <div className="toggle-row" style={{ marginBottom: 10 }}>
+            <button
+              type="button"
+              className={barrierType === 'concrete' ? 'active' : ''}
+              onClick={() => setBarrierType('concrete')}
+              style={{ flex: 1, borderRadius: 10, border: '1px solid #cbd5e1', background: barrierType === 'concrete' ? '#0f172a' : '#f8fafc', color: barrierType === 'concrete' ? '#f8fafc' : '#0f172a', padding: '8px 10px', cursor: 'pointer', fontWeight: 600, fontSize: 11 }}
+            >
+              Concrete (-20 dB)
+            </button>
+            <button
+              type="button"
+              className={barrierType === 'green' ? 'active' : ''}
+              onClick={() => setBarrierType('green')}
+              style={{ flex: 1, borderRadius: 10, border: '1px solid #cbd5e1', background: barrierType === 'green' ? '#065f46' : '#f8fafc', color: barrierType === 'green' ? '#f8fafc' : '#065f46', padding: '8px 10px', cursor: 'pointer', fontWeight: 600, fontSize: 11 }}
+            >
+              Green Wall (-12 dB)
+            </button>
+          </div>
+
           <button
             type="button"
             style={{
@@ -216,7 +259,7 @@ function App() {
           </button>
           {drawingMode && (
             <p className="muted small" style={{ marginTop: 8 }}>
-              Click two map corners to place a rectangular buffer barrier.
+              Click two map corners to place a rectangular {barrierType} barrier.
             </p>
           )}
           {barriers.length > 0 && (
@@ -258,6 +301,12 @@ function App() {
             <div className="metric-row victory-row" style={{ borderBottom: 'none', marginTop: 4 }}>
               <span className="metric-label victory-label">Residents saved</span>
               <span className="metric-value victory-value">~{savedResidents}</span>
+            </div>
+          )}
+          {ecoScore > 0 && (
+            <div className="metric-row" style={{ borderBottom: 'none', marginTop: 4 }}>
+              <span className="metric-label" style={{ color: '#065f46', fontWeight: 700, fontSize: 13 }}>Urban Cooling / Eco-Score</span>
+              <span className="metric-value" style={{ color: '#047857', fontWeight: 800, fontSize: 16 }}>+{ecoScore}%</span>
             </div>
           )}
         </div>

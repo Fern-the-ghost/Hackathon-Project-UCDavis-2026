@@ -61,13 +61,13 @@ function dbColor(db: number): [number, number, number, number] {
   return stops[3][1]
 }
 
-/** Convert barrier rings to GeoJSON polygons for display. */
+/** Convert barrier rings to GeoJSON polygons for display, preserving type in properties. */
 function barriersToGeoJSON(barriers: BarrierRing[]): GeoJSON.FeatureCollection {
   return {
     type: 'FeatureCollection',
     features: barriers.map((b) => ({
       type: 'Feature',
-      properties: {},
+      properties: { type: b.type ?? 'concrete' },
       geometry: {
         type: 'Polygon',
         coordinates: [b.ring],
@@ -171,13 +171,23 @@ export function PlanningMap({
         pickable: false,
       }),
 
-      // §3.5 Barrier footprints — teal outlined fill
+      // §3.5 Barrier footprints — teal for concrete, forest green for green walls
       new GeoJsonLayer({
         id: 'urbanacoustic-barriers',
         data: barrierFeatures,
         filled: true,
-        getFillColor: [20, 184, 166, 120],
-        getLineColor: [13, 148, 136, 230],
+        getFillColor: (f: GeoJSON.Feature) => {
+          const t = (f.properties as { type?: string })?.type
+          return t === 'green'
+            ? [22, 163, 74, 200]   // forest green, high opacity
+            : [20, 184, 166, 120]  // teal
+        },
+        getLineColor: (f: GeoJSON.Feature) => {
+          const t = (f.properties as { type?: string })?.type
+          return t === 'green'
+            ? [5, 100, 40, 230]    // dark green stroke
+            : [13, 148, 136, 230]  // dark teal stroke
+        },
         lineWidthUnits: 'pixels',
         lineWidthMinPixels: 2,
         stroked: true,
@@ -250,7 +260,11 @@ export function PlanningMap({
             <hr className="legend-divider" />
             <div className="legend-conflict">
               <span className="barrier-swatch" />
-              <span className="muted small">Barrier buffer ({barriers.length})</span>
+              <span className="muted small">Concrete barrier ({barriers.filter(b => b.type !== 'green').length})</span>
+            </div>
+            <div className="legend-conflict">
+              <span className="green-swatch" />
+              <span className="muted small">Green wall ({barriers.filter(b => b.type === 'green').length})</span>
             </div>
           </>
         ) : null}

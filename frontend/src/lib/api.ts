@@ -10,8 +10,11 @@ export type NoiseSourcePayload = {
   cooling_mw?: number
 }
 
+export type BarrierType = 'concrete' | 'green'
+
 export type BarrierRing = {
   ring: number[][]
+  type?: BarrierType
 }
 
 export type CalculateRequest = {
