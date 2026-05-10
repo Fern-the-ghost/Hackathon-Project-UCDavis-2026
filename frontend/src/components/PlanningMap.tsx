@@ -197,17 +197,18 @@ export function PlanningMap({
         onHover: handleHover,
       }),
 
-      // §5.2 Conflict mask — pulsing red squares
+      // §5.2 Conflict mask — neon glow on dark mode
       new GeoJsonLayer({
         id: 'urbanacoustic-conflict-mask',
         data: conflictMask ?? { type: 'FeatureCollection', features: [] },
         filled: true,
-        getFillColor: [220, 38, 38, 180],
-        getLineColor: [180, 20, 20, 230],
+        getFillColor: [255, 50, 50, 200],
+        getLineColor: [255, 80, 80, 255],
+        getLineWidth: 3,
         lineWidthUnits: 'pixels',
-        lineWidthMinPixels: 2,
+        lineWidthMinPixels: 3,
         stroked: true,
-        opacity: 0.7,
+        opacity: 0.85,
         pickable: false,
       }),
 
