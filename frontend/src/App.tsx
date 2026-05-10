@@ -6,8 +6,7 @@ import {
   DEFAULT_SOURCES,
 } from './config/noiseMap'
 import { postCalculate } from './lib/api'
-import { bboxCenter, gridToNoisePoints } from './lib/geo'
-import type { NoiseGridPoint } from './lib/geo'
+import { bboxCenter, gridToConflictMask, gridToNoisePolygons } from './lib/geo'
 
 import './App.css'
 
@@ -16,10 +15,11 @@ const API_BASE =
   import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000'
 
 function App() {
-  const [points, setPoints] = useState<NoiseGridPoint[]>(() => {
-    const c = bboxCenter(DEFAULT_BBOX)
-    return [{ lon: c.lon, lat: c.lat, db: 35 }]
-  })
+  const [noisePolygons, setNoisePolygons] = useState<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: [],
+  }))
+  const [conflictMask, setConflictMask] = useState<GeoJSON.FeatureCollection | null>(null)
   const [weighting, setWeighting] = useState<'DBA' | 'DBC'>('DBA')
   const [loading, setLoading] = useState(true)
   const [errorText, setErrorText] = useState<string | null>(null)
@@ -30,7 +30,7 @@ function App() {
       sources: DEFAULT_SOURCES.map((s) => ({ ...s })),
       weighting,
       cell_size_m: 85,
-      A_abs: 2.0,
+      A_abs: 8.0,
     }),
     [weighting],
   )
@@ -43,13 +43,24 @@ function App() {
       try {
         const data = await postCalculate(API_BASE, requestBody)
         if (cancelled) return
-        const next = gridToNoisePoints(
+        const polys = gridToNoisePolygons(
           DEFAULT_BBOX,
           data.rows,
           data.cols,
           data.grid_db,
         )
-        setPoints(next)
+        setNoisePolygons(polys)
+
+        const mask = gridToConflictMask(
+          DEFAULT_BBOX,
+          data.rows,
+          data.cols,
+          data.cell_size_m,
+          data.grid_db,
+          data.zoning_mask,
+          45,
+        )
+        setConflictMask(mask)
       } catch (err) {
         if (!cancelled) {
           setErrorText(err instanceof Error ? err.message : String(err))
@@ -85,7 +96,8 @@ function App() {
     <div className="app-shell">
       <PlanningMap
         mapboxToken={MAPBOX_TOKEN}
-        points={points}
+        noisePolygons={noisePolygons}
+        conflictMask={conflictMask}
         weightingLabel={weighting}
         loading={loading}
         errorText={errorText}

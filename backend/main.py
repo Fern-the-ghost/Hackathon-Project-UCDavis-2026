@@ -21,6 +21,7 @@ from backend.physics import (
 )
 from backend.services.osm_service import OSMBoundingBox, fetch_zoning_features
 from backend.services.zoning_mapper import (
+    ZoningBucket,
     bucket_polygons,
     classify_lonlat,
     merge_bucket_geometries,
@@ -185,6 +186,7 @@ def calculate(body: CalculateRequest) -> CalculateResponse:
             body.weighting,
             A_abs=body.A_abs,
         )
+        n_rows, n_cols = L_grid.shape
         width_m, height_m, _, _, _, _ = compute_metric_layout(
             body.bbox.min_lon,
             body.bbox.min_lat,
@@ -196,27 +198,33 @@ def calculate(body: CalculateRequest) -> CalculateResponse:
         osm_bbox = OSMBoundingBox.model_validate(body.bbox.model_dump())
         try:
             feats = fetch_zoning_features(osm_bbox)
-        except httpx.HTTPError as exc:
-            raise HTTPException(
-                status_code=504,
-                detail=f"OSM Overpass request failed: {exc}",
-            ) from exc
-
-        grouped = bucket_polygons(feats)
-        merged = merge_bucket_geometries(grouped)
-        zoning_arr = _build_zoning_mask(
-            lon0=body.bbox.min_lon,
-            lat0=body.bbox.min_lat,
-            xs_half=xs_half,
-            ys_half=ys_half,
-            merged_zoning=merged,
-        )
-        zoning_mask = [[str(zoning_arr[i, j]) for j in range(zoning_arr.shape[1])] for i in range(zoning_arr.shape[0])]
+            grouped = bucket_polygons(feats)
+            merged = merge_bucket_geometries(grouped)
+            zoning_arr = _build_zoning_mask(
+                lon0=body.bbox.min_lon,
+                lat0=body.bbox.min_lat,
+                xs_half=xs_half,
+                ys_half=ys_half,
+                merged_zoning=merged,
+            )
+            zoning_mask = [
+                [str(zoning_arr[i, j]) for j in range(zoning_arr.shape[1])]
+                for i in range(zoning_arr.shape[0])
+            ]
+        except (httpx.HTTPError, Exception) as exc:
+            # OSM unavailable — degrade gracefully with an UNKNOWN zoning mask
+            # so the heatmap still renders (§5.2 conflict mask will be empty).
+            import logging
+            logging.getLogger("urbanacoustic").warning(
+                "OSM fetch failed, using empty zoning mask: %s", exc
+            )
+            zoning_mask = [
+                [str(ZoningBucket.OTHER.value)] * n_cols for _ in range(n_rows)
+            ]
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     grid_list = L_grid.tolist()
-    n_rows, n_cols = L_grid.shape
     return CalculateResponse(
         rows=n_rows,
         cols=n_cols,
