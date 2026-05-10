@@ -33,6 +33,7 @@ function App() {
   const [drawingMode, setDrawingMode] = useState(false)
   const [drawPoints, setDrawPoints] = useState<[number, number][]>([])
   const [savedResidents, setSavedResidents] = useState(0)
+  const [showToast, setShowToast] = useState(false)
 
   const cellSizeM = 85
 
@@ -85,7 +86,12 @@ function App() {
           setBaselineCells(cellCount)
           setSavedResidents(0)
         } else if (barriers.length > 0 && cellCount < baselineCells) {
-          setSavedResidents(Math.round((baselineCells - cellCount) * POPULATION_PER_CELL))
+          const saved = Math.round((baselineCells - cellCount) * POPULATION_PER_CELL)
+          setSavedResidents(saved)
+          if (saved > 0) {
+            setShowToast(true)
+            setTimeout(() => setShowToast(false), 4000)
+          }
         } else {
           setSavedResidents(0)
         }
@@ -127,6 +133,7 @@ function App() {
     setBarriers([])
     setDrawPoints([])
     setSavedResidents(0)
+    setShowToast(false)
     // Reset baseline so next load re-captures it
     setBaselineCells(null)
   }
@@ -162,6 +169,11 @@ function App() {
         drawingMode={drawingMode}
         drawPoints={drawPoints}
         onMapClick={handleMapClick}
+        toastMessage={
+          showToast && savedResidents > 0
+            ? `Mitigation Active: ${savedResidents} Residents Protected`
+            : null
+        }
       />
 
       <aside className="controls-rail">
@@ -243,9 +255,9 @@ function App() {
             <p className="muted small">No residential conflicts above {CONFLICT_THRESHOLD_DB} dB.</p>
           )}
           {savedResidents > 0 && (
-            <div className="metric-row" style={{ borderBottom: 'none', marginTop: 4 }}>
-              <span className="metric-label" style={{ color: '#059669' }}>Residents saved</span>
-              <span className="metric-value" style={{ color: '#059669' }}>~{savedResidents}</span>
+            <div className="metric-row victory-row" style={{ borderBottom: 'none', marginTop: 4 }}>
+              <span className="metric-label victory-label">Residents saved</span>
+              <span className="metric-value victory-value">~{savedResidents}</span>
             </div>
           )}
         </div>

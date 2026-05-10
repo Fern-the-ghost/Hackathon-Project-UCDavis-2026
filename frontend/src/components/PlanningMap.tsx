@@ -30,6 +30,7 @@ type PlanningMapProps = {
   drawingMode: boolean
   drawPoints: [number, number][]
   onMapClick: (lonlat: [number, number]) => void
+  toastMessage?: string | null
 }
 
 /** §5.1 / §5.2 dB → RGBA color ramp. */
@@ -120,6 +121,7 @@ export function PlanningMap({
   drawingMode,
   drawPoints,
   onMapClick,
+  toastMessage,
 }: PlanningMapProps) {
   const initialViewState: MapViewState = useMemo(() => {
     const c = bboxCenter(DEFAULT_BBOX)
@@ -222,6 +224,7 @@ export function PlanningMap({
         </div>
         {loading ? <div className="status-chip">Loading grid…</div> : null}
         {errorText ? <div className="error-chip">{errorText}</div> : null}
+        {toastMessage ? <div className="toast-chip">{toastMessage}</div> : null}
       </div>
 
       <div className="legend">
